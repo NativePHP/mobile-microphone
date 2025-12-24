@@ -1,0 +1,74 @@
+{
+    "namespace": "Microphone",
+
+    "bridge_functions": [
+        {
+            "name": "Microphone.Start",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.Start",
+            "ios": "MicrophoneFunctions.Start",
+            "description": "Start microphone recording"
+        },
+        {
+            "name": "Microphone.Stop",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.Stop",
+            "ios": "MicrophoneFunctions.Stop",
+            "description": "Stop microphone recording and dispatch event"
+        },
+        {
+            "name": "Microphone.Pause",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.Pause",
+            "ios": "MicrophoneFunctions.Pause",
+            "description": "Pause the current recording"
+        },
+        {
+            "name": "Microphone.Resume",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.Resume",
+            "ios": "MicrophoneFunctions.Resume",
+            "description": "Resume a paused recording"
+        },
+        {
+            "name": "Microphone.GetStatus",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.GetStatus",
+            "ios": "MicrophoneFunctions.GetStatus",
+            "description": "Get current recording status"
+        },
+        {
+            "name": "Microphone.GetRecording",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.GetRecording",
+            "ios": "MicrophoneFunctions.GetRecording",
+            "description": "Get path to last recording"
+        }
+    ],
+
+    "android": {
+        "permissions": [
+            "android.permission.RECORD_AUDIO"
+        ],
+        "dependencies": {
+            "implementation": []
+        },
+        "services": [
+            {
+                "name": ".services.AudioRecordingService",
+                "exported": false,
+                "foregroundServiceType": "microphone"
+            }
+        ]
+    },
+
+    "ios": {
+        "info_plist": {
+            "NSMicrophoneUsageDescription": "This app needs access to the microphone to record audio",
+            "UIBackgroundModes": ["audio"]
+        },
+        "dependencies": {
+            "swift_packages": [],
+            "pods": []
+        }
+    },
+
+    "events": [
+        "NativePHP\\Microphone\\Events\\MicrophoneRecorded",
+        "NativePHP\\Microphone\\Events\\MicrophoneCancelled"
+    ]
+}
