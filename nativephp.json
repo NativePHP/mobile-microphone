@@ -68,7 +68,7 @@
     },
 
     "events": [
-        "NativePHP\\Microphone\\Events\\MicrophoneRecorded",
-        "NativePHP\\Microphone\\Events\\MicrophoneCancelled"
+        "Native\\Mobile\\Events\\Microphone\\MicrophoneRecorded",
+        "Native\\Mobile\\Events\\Microphone\\MicrophoneCancelled"
     ]
 }
