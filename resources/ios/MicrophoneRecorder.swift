@@ -1,8 +1,10 @@
 import Foundation
 import AVFoundation
+import UIKit
 
 /// MicrophoneRecorder manages audio recording functionality for NativePHP iOS
 /// Handles recording state, file management, and AVAudioRecorder lifecycle
+/// Supports background recording when the device screen is locked
 class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
 
     static let shared = MicrophoneRecorder()
@@ -11,6 +13,7 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
     private var recordingState: RecordingState = .idle
     private var lastRecordingPath: String?
     private var currentRecordingFilename: String?
+    private var wasRecordingBeforeInterruption = false
 
     enum RecordingState {
         case idle
@@ -20,6 +23,131 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
 
     private override init() {
         super.init()
+        setupInterruptionHandling()
+    }
+
+    /// Set up notification observers for audio session interruptions and app lifecycle
+    /// This handles cases where iOS temporarily interrupts audio (phone calls, Siri, etc.)
+    private func setupInterruptionHandling() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        // Handle route changes (headphones plugged/unplugged, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        // Handle app going to background - ensure audio session stays active
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+
+        // Handle app coming back to foreground
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+
+        print("🎧 Audio session interruption and lifecycle handling configured")
+    }
+
+    @objc private func handleAppDidEnterBackground() {
+        print("📱 App entered background")
+        if recordingState == .recording {
+            print("🎤 Recording continues in background...")
+            // Ensure audio session is still active
+            do {
+                try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+                print("✅ Audio session reconfirmed active for background")
+            } catch {
+                print("⚠️ Failed to reconfirm audio session: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc private func handleAppWillEnterForeground() {
+        print("📱 App will enter foreground")
+        if recordingState == .recording || recordingState == .paused {
+            print("🎤 Recording state: \(recordingState)")
+        }
+    }
+
+    @objc private func handleInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            // Audio session was interrupted (e.g., incoming call, Siri)
+            print("⚠️ Audio session interrupted")
+            if recordingState == .recording {
+                wasRecordingBeforeInterruption = true
+                audioRecorder?.pause()
+                recordingState = .paused
+                print("⏸️ Recording paused due to interruption")
+            }
+
+        case .ended:
+            // Interruption ended, check if we should resume
+            print("✅ Audio session interruption ended")
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                return
+            }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) && wasRecordingBeforeInterruption {
+                // Re-activate audio session and resume recording
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true)
+                    if audioRecorder?.record() == true {
+                        recordingState = .recording
+                        print("▶️ Recording resumed after interruption")
+                    }
+                } catch {
+                    print("❌ Failed to resume after interruption: \(error.localizedDescription)")
+                }
+            }
+            wasRecordingBeforeInterruption = false
+
+        @unknown default:
+            break
+        }
+    }
+
+    @objc private func handleRouteChange(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+
+        switch reason {
+        case .oldDeviceUnavailable:
+            // Headphones were unplugged - recording continues via speaker
+            print("🎧 Audio route changed: device unavailable, continuing recording")
+        case .newDeviceAvailable:
+            print("🎧 Audio route changed: new device available")
+        default:
+            break
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// Start a new audio recording
@@ -87,12 +215,17 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
     private func startRecording() -> Bool {
         do {
             // Configure audio session for background recording support
-            // Using .mixWithOthers allows recording alongside other audio
             // Using .allowBluetooth enables Bluetooth audio devices
+            // NOT using .defaultToSpeaker - it can interfere with background recording
             // The audio background mode in Info.plist allows recording while device is locked
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-            try audioSession.setActive(true)
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.allowBluetooth, .allowBluetoothA2DP]
+            )
+            // Use notifyOthersOnDeactivation to be a good citizen
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
             // Generate unique timestamped filename
             let timestamp = Int(Date().timeIntervalSince1970)

@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import com.nativephp.microphone.services.AudioRecordingService
-import com.nativephp.mobile.utils.WebViewProvider
+import com.nativephp.mobile.utils.NativeActionCoordinator
 import org.json.JSONObject
 
 /**
@@ -69,7 +69,7 @@ class MicrophoneCoordinator : Fragment() {
                         put("id", pendingRecordingId)
                     }
                 }
-                dispatch(cancelEvent, payload.toString())
+                NativeActionCoordinator.dispatchEvent(requireActivity(), cancelEvent, payload.toString())
 
                 // Clean up
                 pendingRecordingId = null
@@ -149,7 +149,7 @@ class MicrophoneCoordinator : Fragment() {
                         put("id", pendingRecordingId)
                     }
                 }
-                dispatch(cancelEvent, payload.toString())
+                NativeActionCoordinator.dispatchEvent(requireActivity(), cancelEvent, payload.toString())
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error starting recording: ${e.message}", e)
@@ -196,8 +196,9 @@ class MicrophoneCoordinator : Fragment() {
             }
 
             // Dispatch event (must be on main thread)
+            val activity = requireActivity()
             Handler(Looper.getMainLooper()).post {
-                dispatch(eventClass, payload.toString())
+                NativeActionCoordinator.dispatchEvent(activity, eventClass, payload.toString())
             }
         }
 
@@ -243,44 +244,6 @@ class MicrophoneCoordinator : Fragment() {
         }
     }
 
-    private fun dispatch(event: String, payloadJson: String) {
-        Log.d(TAG, "📢 Dispatching event: $event")
-        Log.d(TAG, "📦 Payload: $payloadJson")
-
-        val eventForJs = event.replace("\\", "\\\\")
-        val js = """
-            (function () {
-                const payload = $payloadJson;
-
-                const detail = { event: "$eventForJs", payload };
-
-                document.dispatchEvent(new CustomEvent("native-event", { detail }));
-
-                if (window.Livewire && typeof window.Livewire.dispatch === 'function') {
-                    window.Livewire.dispatch("native:$eventForJs", payload);
-                }
-
-                fetch('/_native/api/events', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    },
-                    body: JSON.stringify({
-                        event: "$eventForJs",
-                        payload: payload
-                    })
-                }).then(response => response.json())
-                  .then(data => {
-                      console.log("Microphone Event Dispatch Success");
-                  })
-                  .catch(error => console.error("Microphone Event Dispatch Error:", error.message));
-            })();
-        """.trimIndent()
-
-        (activity as? WebViewProvider)?.getWebView()?.evaluateJavascript(js, null)
-    }
-
     companion object {
         private const val TAG = "MicrophoneCoordinator"
 
@@ -291,14 +254,5 @@ class MicrophoneCoordinator : Fragment() {
                         .add(it, "MicrophoneCoordinator")
                         .commitNow()
                 }
-
-        /**
-         * Dispatch an event to PHP from anywhere in the app
-         */
-        fun dispatchEvent(activity: FragmentActivity, event: String, payloadJson: String) {
-            Log.d(TAG, "📢 Static dispatch event: $event")
-            val coordinator = install(activity)
-            coordinator.dispatch(event, payloadJson)
-        }
     }
 }
