@@ -142,6 +142,15 @@ class MicrophoneRecorder(
             }
             mediaRecorder = null
 
+            // CRITICAL: Close the file descriptor BEFORE trying to read the file
+            // The file descriptor holds a write lock that prevents reading
+            try {
+                currentFileDescriptor?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing file descriptor", e)
+            }
+            currentFileDescriptor = null
+
             // Get the actual file path from the MediaStore URI
             val filePath = currentRecordingUri?.let { getAudioPathFromUri(it) }
             lastRecordingPath = filePath
