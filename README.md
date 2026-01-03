@@ -2,62 +2,80 @@
 
 Audio recording plugin for NativePHP Mobile with pause/resume support, background recording, and native permission handling.
 
-## Features
+## Overview
 
-- Record audio in M4A format (AAC codec)
-- Pause and resume recordings
-- Background recording support (Android foreground service)
-- Automatic permission handling
-- Custom event dispatching
-- Recording status tracking
+The Microphone API provides access to the device's microphone for recording audio. It offers a fluent interface for starting and managing recordings, tracking them with unique identifiers, and responding to completion events.
 
 ## Installation
 
 ```bash
-composer require nativephp/microphone
-```
-
-### Register the Plugin
-
-Add the plugin to your `NativePluginsServiceProvider`:
-
-```php
-// app/Providers/NativePluginsServiceProvider.php
-
-public function plugins(): array
-{
-    return [
-        \NativePHP\Microphone\MicrophoneServiceProvider::class,
-    ];
-}
+composer require nativephp/mobile-microphone
 ```
 
 ## Usage
 
-### Basic Recording
+### PHP (Livewire/Blade)
 
 ```php
-use NativePHP\Microphone\Facades\Microphone;
+use Native\Mobile\Facades\Microphone;
 
 // Start recording
 Microphone::record()->start();
 
-// Stop recording (triggers MicrophoneRecorded event)
+// Stop recording
 Microphone::stop();
+
+// Pause recording
+Microphone::pause();
+
+// Resume recording
+Microphone::resume();
+
+// Get status
+$status = Microphone::getStatus();
+// Returns: "idle", "recording", or "paused"
+
+// Get last recording path
+$path = Microphone::getRecording();
 ```
 
-### With Custom Event
+### JavaScript (Vue/React/Inertia)
 
-```php
-use NativePHP\Microphone\Facades\Microphone;
-use App\Events\MyAudioRecordedEvent;
+```js
+import { microphone, on, off, Events } from '#nativephp';
 
-Microphone::record()
-    ->event(MyAudioRecordedEvent::class)
-    ->start();
+// Basic recording
+await microphone.record();
+
+// With identifier for tracking
+await microphone.record()
+    .id('voice-memo');
+
+// Stop recording
+await microphone.stop();
+
+// Pause/resume
+await microphone.pause();
+await microphone.resume();
+
+// Get status
+const result = await microphone.getStatus();
+if (result.status === 'recording') {
+    // Recording in progress
+}
+
+// Get last recording
+const result = await microphone.getRecording();
+if (result.path) {
+    // Process the recording
+}
 ```
 
-### With Tracking ID
+## PendingMicrophone API
+
+### `id(string $id)`
+
+Set a unique identifier for this recording.
 
 ```php
 Microphone::record()
@@ -65,142 +83,116 @@ Microphone::record()
     ->start();
 ```
 
-### Pause & Resume
+### `event(string $eventClass)`
+
+Set a custom event class to dispatch when recording completes.
 
 ```php
-// Pause the current recording
-Microphone::pause();
+use App\Events\VoiceMessageRecorded;
 
-// Resume a paused recording
-Microphone::resume();
+Microphone::record()
+    ->event(VoiceMessageRecorded::class)
+    ->start();
 ```
 
-### Check Recording Status
+### `remember()`
+
+Store the recorder's ID in the session for later retrieval.
 
 ```php
-$status = Microphone::getStatus();
-// Returns: "idle", "recording", or "paused"
+Microphone::record()
+    ->id('voice-note')
+    ->remember()
+    ->start();
 ```
 
-### Get Last Recording Path
+### `start()`
 
-```php
-$path = Microphone::getRecording();
-// Returns: "/path/to/audio_123456.m4a" or null
-```
-
-## Handling Events
-
-### Using Livewire Attributes
-
-```php
-use Livewire\Component;
-use Native\Mobile\Attributes\OnNative;
-use NativePHP\Microphone\Events\MicrophoneRecorded;
-use NativePHP\Microphone\Events\MicrophoneCancelled;
-
-class AudioRecorder extends Component
-{
-    #[OnNative(MicrophoneRecorded::class)]
-    public function handleRecorded($path, $mimeType = null, $id = null)
-    {
-        // $path - absolute path to the recorded audio file
-        // $mimeType - "audio/m4a"
-        // $id - the ID you set with ->id(), if any
-
-        // Move the file to storage
-        File::move($path, storage_path('app/recordings/audio.m4a'));
-    }
-
-    #[OnNative(MicrophoneCancelled::class)]
-    public function handleCancelled($cancelled, $reason = null, $id = null)
-    {
-        // $reason - "permission_denied" or "start_failed"
-    }
-}
-```
-
-### Using Custom Events
-
-```php
-// app/Events/MyAudioRecordedEvent.php
-namespace App\Events;
-
-class MyAudioRecordedEvent
-{
-    public function __construct(
-        public string $path,
-        public string $mimeType = 'audio/m4a',
-        public ?string $id = null
-    ) {}
-}
-
-// In your Livewire component
-#[OnNative(MyAudioRecordedEvent::class)]
-public function handleMyAudio($path, $mimeType, $id)
-{
-    // Handle the recording
-}
-```
+Explicitly start the audio recording. Returns `true` if recording started successfully.
 
 ## Events
 
-| Event | Properties | Description |
-|-------|------------|-------------|
-| `MicrophoneRecorded` | `path`, `mimeType`, `id` | Dispatched when recording stops successfully |
-| `MicrophoneCancelled` | `cancelled`, `reason`, `id` | Dispatched when recording is cancelled or fails |
+### `MicrophoneRecorded`
 
-### Cancellation Reasons
+Dispatched when an audio recording completes.
 
-- `permission_denied` - User denied microphone permission
-- `start_failed` - Failed to initialize the recorder
+**Payload:**
+- `string $path` - File path to the recorded audio
+- `string $mimeType` - MIME type of the audio (default: `'audio/m4a'`)
+- `?string $id` - The recorder's ID, if one was set
 
-## Permissions
+#### PHP
 
-The plugin automatically requests the required permissions:
+```php
+use Native\Mobile\Attributes\OnNative;
+use Native\Mobile\Events\Microphone\MicrophoneRecorded;
 
-### Android
+#[OnNative(MicrophoneRecorded::class)]
+public function handleAudioRecorded(string $path, string $mimeType, ?string $id)
+{
+    $this->recordings[] = [
+        'path' => $path,
+        'mimeType' => $mimeType,
+        'id' => $id,
+    ];
+}
+```
 
-- `android.permission.RECORD_AUDIO`
+#### Vue
 
-The plugin includes a foreground service for background recording support.
+```js
+import { on, off, Events } from '#nativephp';
+import { ref, onMounted, onUnmounted } from 'vue';
 
-### iOS
+const recordings = ref([]);
 
-- `NSMicrophoneUsageDescription` - Added to Info.plist automatically
-- `UIBackgroundModes: audio` - For background recording
+const handleAudioRecorded = (payload) => {
+    const { path, mimeType, id } = payload;
+    recordings.value.push({ path, mimeType, id });
+};
 
-## API Reference
+onMounted(() => {
+    on(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+});
 
-### Microphone Facade
+onUnmounted(() => {
+    off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+});
+```
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `record()` | `PendingMicrophone` | Start building a recording request |
-| `stop()` | `void` | Stop current recording |
-| `pause()` | `void` | Pause current recording |
-| `resume()` | `void` | Resume paused recording |
-| `getStatus()` | `string` | Get status: "idle", "recording", "paused" |
-| `getRecording()` | `?string` | Get path to last recording |
+#### React
 
-### PendingMicrophone
+```jsx
+import { on, off, Events } from '#nativephp';
+import { useState, useEffect } from 'react';
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `id(string $id)` | `self` | Set a tracking ID |
-| `getId()` | `string` | Get the ID (auto-generates if not set) |
-| `event(string $class)` | `self` | Set custom event class |
-| `remember()` | `self` | Flash ID to session |
-| `start()` | `bool` | Start recording |
+const [recordings, setRecordings] = useState([]);
 
-## File Format
+const handleAudioRecorded = (payload) => {
+    const { path, mimeType, id } = payload;
+    setRecordings(prev => [...prev, { path, mimeType, id }]);
+};
 
-Recordings are saved as M4A files with:
-- Codec: AAC
-- Bit rate: 128 kbps
-- Sample rate: 44.1 kHz
+useEffect(() => {
+    on(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
 
-Files are initially saved to the app's cache directory and should be moved to permanent storage in your event handler.
+    return () => {
+        off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+    };
+}, []);
+```
+
+## Notes
+
+- **Microphone Permission:** The first time your app requests microphone access, users will be prompted for permission. If denied, recording functions will fail silently.
+
+- **Background Recording:** You can allow your app to record audio while the device is locked by toggling `microphone_background` to true in the config.
+
+- **File Format:** Recordings are stored as M4A/AAC audio files (`.m4a`). This format is optimized for small file sizes while maintaining quality.
+
+- **Recording State:** Only one recording can be active at a time. Calling `start()` while a recording is in progress will return `false`.
+
+- **Auto-Start Behavior:** If you don't explicitly call `start()`, the recording will automatically start when the `PendingMicrophone` is destroyed.
 
 ## License
 
