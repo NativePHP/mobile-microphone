@@ -15,7 +15,7 @@ enum MicrophoneFunctions {
     /// Returns:
     ///   - status: string - "success" or "error"
     /// Events:
-    ///   - Fires "NativePHP\Microphone\Events\MicrophoneRecorded" when recording is stopped
+    ///   - Fires "Native\Mobile\Events\Microphone\MicrophoneRecorded" when recording is stopped
     class Start: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             let id = parameters["id"] as? String
@@ -41,7 +41,7 @@ enum MicrophoneFunctions {
 
     /// Stop microphone recording
     /// Events:
-    ///   - Fires "NativePHP\Microphone\Events\MicrophoneRecorded" via Livewire dispatch when stopped
+    ///   - Fires "Native\Mobile\Events\Microphone\MicrophoneRecorded" via Livewire dispatch when stopped
     class Stop: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             print("⏹️ Stopping microphone recording")
@@ -53,7 +53,7 @@ enum MicrophoneFunctions {
             // Retrieve stored id and event class from UserDefaults
             let id = UserDefaults.standard.string(forKey: "pending_microphone_id")
             let eventClass = UserDefaults.standard.string(forKey: "pending_microphone_event")
-                ?? "NativePHP\\Microphone\\Events\\MicrophoneRecorded"
+                ?? "Native\\Mobile\\Events\\Microphone\\MicrophoneRecorded"
 
             print("📤 Dispatching \(eventClass) with path=\(path), id=\(id ?? "nil")")
 

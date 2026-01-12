@@ -61,7 +61,7 @@ class MicrophoneCoordinator : Fragment() {
                 Toast.makeText(context, "Microphone permission is required to record audio", Toast.LENGTH_SHORT).show()
 
                 // Dispatch cancelled event
-                val cancelEvent = "NativePHP\\Microphone\\Events\\MicrophoneCancelled"
+                val cancelEvent = "Native\\Mobile\\Events\\Microphone\\MicrophoneCancelled"
                 val payload = JSONObject().apply {
                     put("cancelled", true)
                     put("reason", "permission_denied")
@@ -94,7 +94,7 @@ class MicrophoneCoordinator : Fragment() {
         val prefs = context.getSharedPreferences("microphone_recording", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("pending_id", id)
-            .putString("pending_event", event ?: "NativePHP\\Microphone\\Events\\MicrophoneRecorded")
+            .putString("pending_event", event ?: "Native\\Mobile\\Events\\Microphone\\MicrophoneRecorded")
             .apply()
 
         // Check audio permission first
@@ -141,7 +141,7 @@ class MicrophoneCoordinator : Fragment() {
                 Toast.makeText(context, "Failed to start recording", Toast.LENGTH_SHORT).show()
 
                 // Dispatch error event
-                val cancelEvent = "NativePHP\\Microphone\\Events\\MicrophoneCancelled"
+                val cancelEvent = "Native\\Mobile\\Events\\Microphone\\MicrophoneCancelled"
                 val payload = JSONObject().apply {
                     put("cancelled", true)
                     put("reason", "start_failed")
@@ -176,7 +176,7 @@ class MicrophoneCoordinator : Fragment() {
             val prefs = context.getSharedPreferences("microphone_recording", Context.MODE_PRIVATE)
             val id = prefs.getString("pending_id", null)
             val eventClass = prefs.getString("pending_event", null)
-                ?: "NativePHP\\Microphone\\Events\\MicrophoneRecorded"
+                ?: "Native\\Mobile\\Events\\Microphone\\MicrophoneRecorded"
 
             Log.d(TAG, "📤 Dispatching $eventClass with path=$path, id=$id")
 
