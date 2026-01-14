@@ -1,6 +1,6 @@
 {
     "name": "nativephp/mobile-microphone",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "Microphone recording plugin for NativePHP Mobile - audio recording with pause/resume support",
     "type": "nativephp-plugin",
     "license": "MIT",
