@@ -193,7 +193,3 @@ useEffect(() => {
 - **Recording State:** Only one recording can be active at a time. Calling `start()` while a recording is in progress will return `false`.
 
 - **Auto-Start Behavior:** If you don't explicitly call `start()`, the recording will automatically start when the `PendingMicrophone` is destroyed.
-
-## License
-
-MIT
