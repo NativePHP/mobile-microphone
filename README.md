@@ -42,30 +42,30 @@ $path = Microphone::getRecording();
 ### JavaScript (Vue/React/Inertia)
 
 ```js
-import { microphone, on, off, Events } from '#nativephp';
+import { Microphone, On, Off, Events } from '#nativephp';
 
 // Basic recording
-await microphone.record();
+await Microphone.record();
 
 // With identifier for tracking
-await microphone.record()
+await Microphone.record()
     .id('voice-memo');
 
 // Stop recording
-await microphone.stop();
+await Microphone.stop();
 
 // Pause/resume
-await microphone.pause();
-await microphone.resume();
+await Microphone.pause();
+await Microphone.resume();
 
 // Get status
-const result = await microphone.getStatus();
+const result = await Microphone.getStatus();
 if (result.status === 'recording') {
     // Recording in progress
 }
 
 // Get last recording
-const result = await microphone.getRecording();
+const result = await Microphone.getRecording();
 if (result.path) {
     // Process the recording
 }
@@ -141,7 +141,7 @@ public function handleAudioRecorded(string $path, string $mimeType, ?string $id)
 #### Vue
 
 ```js
-import { on, off, Events } from '#nativephp';
+import { On, Off, Events } from '#nativephp';
 import { ref, onMounted, onUnmounted } from 'vue';
 
 const recordings = ref([]);
@@ -152,18 +152,18 @@ const handleAudioRecorded = (payload) => {
 };
 
 onMounted(() => {
-    on(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+    On(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
 });
 
 onUnmounted(() => {
-    off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+    Off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
 });
 ```
 
 #### React
 
 ```jsx
-import { on, off, Events } from '#nativephp';
+import { On, Off, Events } from '#nativephp';
 import { useState, useEffect } from 'react';
 
 const [recordings, setRecordings] = useState([]);
@@ -174,10 +174,10 @@ const handleAudioRecorded = (payload) => {
 };
 
 useEffect(() => {
-    on(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+    On(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
 
     return () => {
-        off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
+        Off(Events.Microphone.MicrophoneRecorded, handleAudioRecorded);
     };
 }, []);
 ```
