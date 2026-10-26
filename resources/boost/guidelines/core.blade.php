@@ -78,7 +78,7 @@ public function handleAudioRecorded(string $path, string $mimeType, ?string $id)
 ### PendingMicrophone Methods
 
 - `->id(string $id)` - Set unique identifier for tracking
-- `->event(string $class)` - Set custom event class
+- `->event(string $class)` - Set custom event class (on nativephp/mobile 4.6.1+ / 3.3.11+ it must implement `Native\Mobile\Events\Contracts\DispatchableFromNative`, or it never fires)
 - `->remember()` - Store ID in session
 - `->start()` - Explicitly start recording
 

@@ -95,6 +95,17 @@ Microphone::record()
     ->start();
 ```
 
+On nativephp/mobile 4.6.1 and later (3.3.11 and later on 3.x), your event class must implement `Native\Mobile\Events\Contracts\DispatchableFromNative`. Core refuses any other class sent back from native, so the event would never fire. Extending the default `MicrophoneRecorded` event also works, since it already implements the interface.
+
+```php
+use Native\Mobile\Events\Contracts\DispatchableFromNative;
+
+class VoiceMessageRecorded implements DispatchableFromNative
+{
+    // ...
+}
+```
+
 ### `remember()`
 
 Store the recorder's ID in the session for later retrieval.
