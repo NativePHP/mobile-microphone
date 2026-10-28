@@ -22,6 +22,9 @@ object MicrophoneFunctions {
      * Parameters:
      *   - id: (optional) string - Unique identifier for this recording
      *   - event: (optional) string - Custom event class to dispatch when recording completes
+     *   - format: (optional) string - "m4a" (AAC, the default) or "wav" (mono 16-bit PCM)
+     *   - sampleRate: (optional) number - the WAV's sample rate in Hz, 16000 unless given
+     *   - maxDuration: (optional) number - seconds after which the recording stops by itself
      * Returns:
      *   - status: string - "success" or "error"
      * Events:
@@ -31,14 +34,15 @@ object MicrophoneFunctions {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             val id = parameters["id"] as? String
             val event = parameters["event"] as? String
+            val options = RecordingOptions.fromParameters(parameters)
 
-            Log.d("MicrophoneFunctions.Start", "🎤 Starting microphone recording with id=$id, event=$event")
+            Log.d("MicrophoneFunctions.Start", "🎤 Starting microphone recording with id=$id, event=$event, options=$options")
 
             // Must run on main thread for fragment operations
             Handler(Looper.getMainLooper()).post {
                 try {
                     val coordinator = MicrophoneCoordinator.install(activity)
-                    coordinator.launchMicrophoneRecorder(id, event)
+                    coordinator.launchMicrophoneRecorder(id, event, options = options)
                 } catch (e: Exception) {
                     Log.e("MicrophoneFunctions.Start", "Error: ${e.message}", e)
                 }
@@ -126,6 +130,15 @@ object MicrophoneFunctions {
             Log.d("MicrophoneFunctions.GetStatus", "📊 Status: $status")
 
             return mapOf("status" to status)
+        }
+    }
+
+    /**
+     * How loud the microphone has been since this was last called, from 0 to 1 (synchronous - uses static recorder)
+     */
+    class GetLevel(private val activity: FragmentActivity) : BridgeFunction {
+        override fun execute(parameters: Map<String, Any>): Map<String, Any> {
+            return mapOf("level" to (microphoneRecorder?.level() ?: 0f))
         }
     }
 
