@@ -2,6 +2,51 @@ import Foundation
 import AVFoundation
 import UIKit
 
+/// How a recording is made, from the parameters `Microphone.Start` was called with.
+///
+/// - `format`: "m4a" (AAC, the default) or "wav" (mono 16-bit PCM)
+/// - `sampleRate`: the WAV's sample rate in Hz, 16000 unless given
+/// - `maxDuration`: seconds after which the recording stops by itself, as if `Microphone.Stop` was called; 0 for no limit
+struct RecordingOptions {
+    let format: String
+    let sampleRate: Double
+    let maxDuration: TimeInterval
+
+    static let standard = RecordingOptions(parameters: [:])
+
+    init(parameters: [String: Any]) {
+        format = (parameters["format"] as? String)?.lowercased() == "wav" ? "wav" : "m4a"
+        sampleRate = (parameters["sampleRate"] as? NSNumber)?.doubleValue ?? 16000
+        maxDuration = max(0, (parameters["maxDuration"] as? NSNumber)?.doubleValue ?? 0)
+    }
+
+    var isWav: Bool { format == "wav" }
+
+    var mimeType: String { isWav ? "audio/wav" : "audio/m4a" }
+
+    var settings: [String: Any] {
+        if isWav {
+            return [
+                AVFormatIDKey: Int(kAudioFormatLinearPCM),
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+            ]
+        }
+
+        return [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100.0,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+            AVEncoderBitRateKey: 128000
+        ]
+    }
+}
+
 /// MicrophoneRecorder manages audio recording functionality for NativePHP iOS
 /// Handles recording state, file management, and AVAudioRecorder lifecycle
 /// Supports background recording when the device screen is locked
@@ -14,6 +59,21 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
     private var lastRecordingPath: String?
     private var currentRecordingFilename: String?
     private var wasRecordingBeforeInterruption = false
+    private var options = RecordingOptions.standard
+
+    /// Start is waiting on the permission prompt. Stop meanwhile cancels it, so granting
+    /// afterwards doesn't start a recording nobody is waiting for.
+    private var startsOnPermission = false
+
+    /// The audio session as it was before recording, put back when the recording ends, so audio
+    /// played afterwards doesn't come out of the earpiece.
+    private var previousSession: (category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions)?
+
+    /// The loudest the microphone has been since `level()` was last asked, from 0 to 1, sampled
+    /// from the recorder's meter twenty times a second.
+    private var loudest: Float = 0
+    private let loudestLock = NSLock()
+    private var meterTimer: Timer?
 
     enum RecordingState {
         case idle
@@ -113,7 +173,7 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
                 // Re-activate audio session and resume recording
                 do {
                     try AVAudioSession.sharedInstance().setActive(true)
-                    if audioRecorder?.record() == true {
+                    if record() {
                         recordingState = .recording
                         print("▶️ Recording resumed after interruption")
                     }
@@ -150,13 +210,16 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
         NotificationCenter.default.removeObserver(self)
     }
 
-    /// Start a new audio recording
+    /// Start a new audio recording. When the microphone can't be used (permission denied, or the
+    /// recorder failed to start), MicrophoneCancelled is dispatched with the reason.
     /// - Returns: true if recording started successfully, false otherwise
-    func start() -> Bool {
+    func start(options: RecordingOptions = .standard) -> Bool {
         if recordingState != .idle {
             print("⚠️ Cannot start recording - current state: \(recordingState)")
             return false
         }
+
+        self.options = options
 
         // Request microphone permission if needed
         if #available(iOS 17.0, *) {
@@ -167,21 +230,28 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
                 return startRecording()
             case .denied:
                 print("❌ Microphone permission denied")
+                MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                 return false
             case .undetermined:
                 // Request permission
+                startsOnPermission = true
                 AVAudioApplication.requestRecordPermission { [weak self] granted in
-                    if granted {
-                        DispatchQueue.main.async {
-                            _ = self?.startRecording()
+                    DispatchQueue.main.async {
+                        guard let self = self, self.startsOnPermission else { return }
+                        self.startsOnPermission = false
+
+                        if granted {
+                            _ = self.startRecording()
+                        } else {
+                            print("❌ User denied microphone permission")
+                            MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                         }
-                    } else {
-                        print("❌ User denied microphone permission")
                     }
                 }
                 return false
             @unknown default:
                 print("❌ Unknown microphone permission state")
+                MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                 return false
             }
         } else {
@@ -192,21 +262,28 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
                 return startRecording()
             case .denied:
                 print("❌ Microphone permission denied")
+                MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                 return false
             case .undetermined:
                 // Request permission
+                startsOnPermission = true
                 AVAudioSession.sharedInstance().requestRecordPermission { [weak self] allowed in
-                    if allowed {
-                        DispatchQueue.main.async {
-                            _ = self?.startRecording()
+                    DispatchQueue.main.async {
+                        guard let self = self, self.startsOnPermission else { return }
+                        self.startsOnPermission = false
+
+                        if allowed {
+                            _ = self.startRecording()
+                        } else {
+                            print("❌ User denied microphone permission")
+                            MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                         }
-                    } else {
-                        print("❌ User denied microphone permission")
                     }
                 }
                 return false
             @unknown default:
                 print("❌ Unknown microphone permission state")
+                MicrophoneFunctions.dispatchCancelled(reason: "permission_denied")
                 return false
             }
         }
@@ -219,6 +296,7 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
             // NOT using .defaultToSpeaker - it can interfere with background recording
             // The audio background mode in Info.plist allows recording while device is locked
             let audioSession = AVAudioSession.sharedInstance()
+            previousSession = (audioSession.category, audioSession.mode, audioSession.categoryOptions)
             try audioSession.setCategory(
                 .playAndRecord,
                 mode: .default,
@@ -227,9 +305,9 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
             // Use notifyOthersOnDeactivation to be a good citizen
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-            // Generate unique timestamped filename
-            let timestamp = Int(Date().timeIntervalSince1970)
-            let filename = "NativePHP_\(timestamp).m4a"
+            // A unique timestamped filename, to the millisecond so two recordings in the same second don't collide
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            let filename = "NativePHP_\(timestamp).\(options.format)"
             currentRecordingFilename = filename
 
             // Save to temporary directory
@@ -240,62 +318,76 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
 
             print("📝 Creating recording file: \(audioFilename.path)")
 
-            // Configure recording settings
-            let settings: [String: Any] = [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44100.0,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-                AVEncoderBitRateKey: 128000
-            ]
-
             // Create and start recorder
-            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: options.settings)
             audioRecorder?.delegate = self
+            audioRecorder?.isMeteringEnabled = true
             audioRecorder?.prepareToRecord()
 
-            if audioRecorder?.record() == true {
+            if record() {
                 recordingState = .recording
+                startMetering()
                 print("🎤 Recording started successfully")
                 return true
             } else {
                 print("❌ Failed to start recording")
                 cleanup()
+                MicrophoneFunctions.dispatchCancelled(reason: "start_failed")
                 return false
             }
 
         } catch {
             print("❌ Error starting recording: \(error.localizedDescription)")
             cleanup()
+            MicrophoneFunctions.dispatchCancelled(reason: "start_failed")
             return false
         }
+    }
+
+    /// Records, or carries on after a pause, for whatever is left of the limit.
+    private func record() -> Bool {
+        guard let recorder = audioRecorder else { return false }
+
+        if options.maxDuration > 0 {
+            let remaining = options.maxDuration - recorder.currentTime
+            return remaining > 0 && recorder.record(forDuration: remaining)
+        }
+
+        return recorder.record()
     }
 
     /// Stop the current recording
     /// - Returns: absolute path to the recorded file, or nil if no recording or error
     func stop() -> String? {
         if recordingState == .idle {
-            print("⚠️ Cannot stop recording - no active recording")
+            if startsOnPermission {
+                print("⏹️ Recording cancelled before the permission prompt was answered")
+                startsOnPermission = false
+            } else {
+                print("⚠️ Cannot stop recording - no active recording")
+            }
             return nil
         }
 
+        // Idle first: stopping makes the recorder call its delegate, which must not take this for the limit.
+        recordingState = .idle
         audioRecorder?.stop()
 
         let filePath = audioRecorder?.url.path
         lastRecordingPath = filePath
-        recordingState = .idle
 
-        // Deactivate audio session
-        do {
-            try AVAudioSession.sharedInstance().setActive(false)
-        } catch {
-            print("⚠️ Error deactivating audio session: \(error.localizedDescription)")
-        }
+        stopMetering()
+        releaseSession()
 
         audioRecorder = nil
 
         print("⏹️ Recording stopped: \(filePath ?? "nil")")
         return filePath
+    }
+
+    /// The MIME type of the recording made last, or under way.
+    var mimeType: String {
+        options.mimeType
     }
 
     /// Pause the current recording
@@ -317,7 +409,7 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
             return
         }
 
-        if audioRecorder?.record() == true {
+        if record() {
             recordingState = .recording
             print("▶️ Recording resumed")
         } else {
@@ -344,30 +436,104 @@ class MicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
         return lastRecordingPath
     }
 
-    /// Clean up resources in case of error
-    private func cleanup() {
-        audioRecorder?.stop()
-        audioRecorder = nil
-        recordingState = .idle
+    /// How loud the microphone has been since this was last asked, from 0 to 1 (the loudest
+    /// sample's amplitude), then starts over. 0 while nothing is recording.
+    func level() -> Float {
+        loudestLock.lock()
+        defer { loudestLock.unlock() }
+
+        let level = loudest
+        loudest = 0
+
+        return level
+    }
+
+    private func startMetering() {
+        stopMetering()
+
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self = self, let recorder = self.audioRecorder, self.recordingState == .recording else { return }
+
+            recorder.updateMeters()
+            let peak = min(1, max(0, pow(10, recorder.peakPower(forChannel: 0) / 20)))
+
+            self.loudestLock.lock()
+            self.loudest = max(self.loudest, peak)
+            self.loudestLock.unlock()
+        }
+
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
+    }
+
+    private func stopMetering() {
+        let timer = meterTimer
+        meterTimer = nil
+
+        DispatchQueue.main.async {
+            timer?.invalidate()
+        }
+
+        loudestLock.lock()
+        loudest = 0
+        loudestLock.unlock()
+    }
+
+    /// Lets go of the audio session and puts back the category it had before recording.
+    private func releaseSession() {
+        let audioSession = AVAudioSession.sharedInstance()
 
         do {
-            try AVAudioSession.sharedInstance().setActive(false)
+            try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             print("⚠️ Error deactivating audio session: \(error.localizedDescription)")
         }
+
+        if let previous = previousSession {
+            do {
+                try audioSession.setCategory(previous.category, mode: previous.mode, options: previous.options)
+            } catch {
+                print("⚠️ Error restoring audio session category: \(error.localizedDescription)")
+            }
+        }
+
+        previousSession = nil
+    }
+
+    /// Clean up resources in case of error
+    private func cleanup() {
+        recordingState = .idle
+        audioRecorder?.stop()
+        audioRecorder = nil
+        stopMetering()
+        releaseSession()
     }
 
     // MARK: - AVAudioRecorderDelegate
 
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        guard recorder === audioRecorder, recordingState != .idle else {
+            return
+        }
+
         if !flag {
             print("❌ Recording finished unsuccessfully")
             cleanup()
+            MicrophoneFunctions.dispatchCancelled(reason: "recording_failed")
+            return
+        }
+
+        // Only reaching the limit ends a recording on its own: it's finished as Microphone.Stop would finish it.
+        print("⏱️ Recording reached its limit of \(options.maxDuration)s")
+
+        if let path = stop() {
+            MicrophoneFunctions.dispatchRecorded(path: path, mimeType: options.mimeType)
         }
     }
 
     func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
         print("❌ Audio recorder encode error: \(error?.localizedDescription ?? "unknown")")
         cleanup()
+        MicrophoneFunctions.dispatchCancelled(reason: "recording_failed")
     }
 }

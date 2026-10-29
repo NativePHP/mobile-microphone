@@ -41,6 +41,7 @@ describe('Plugin Manifest', function () {
             'Microphone.Pause',
             'Microphone.Resume',
             'Microphone.GetStatus',
+            'Microphone.GetLevel',
             'Microphone.GetRecording',
         );
 

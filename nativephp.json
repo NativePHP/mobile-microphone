@@ -32,6 +32,12 @@
             "description": "Get current recording status"
         },
         {
+            "name": "Microphone.GetLevel",
+            "android": "com.nativephp.microphone.MicrophoneFunctions.GetLevel",
+            "ios": "MicrophoneFunctions.GetLevel",
+            "description": "Get how loud the microphone has been since the last call (0 - 1)"
+        },
+        {
             "name": "Microphone.GetRecording",
             "android": "com.nativephp.microphone.MicrophoneFunctions.GetRecording",
             "ios": "MicrophoneFunctions.GetRecording",

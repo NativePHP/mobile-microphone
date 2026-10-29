@@ -23,6 +23,12 @@ $status = Microphone::getStatus();
 
 // Get last recording path
 $path = Microphone::getRecording();
+
+// Mono 16-bit WAV at 16 kHz, stopping by itself after a minute
+Microphone::record()->wav()->maxDuration(60)->start();
+
+// How loud the microphone has been since the last call, 0 to 1, for a level meter
+$level = Microphone::level();
 </code-snippet>
 @endverbatim
 

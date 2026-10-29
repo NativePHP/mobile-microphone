@@ -28,6 +28,11 @@ class MicrophoneCoordinator : Fragment() {
     private var pendingRecordingId: String? = null
     private var pendingRecordingEvent: String? = null
     private var enableBackgroundRecording: Boolean = false
+    private var pendingOptions = RecordingOptions()
+
+    // Start is waiting on the permission dialog. Stop meanwhile cancels it, so granting
+    // afterwards doesn't start a recording nobody is waiting for.
+    private var startsOnPermission = false
 
     // Use the static recorder from MicrophoneFunctions
     private val microphoneRecorder: MicrophoneRecorder?
@@ -50,6 +55,12 @@ class MicrophoneCoordinator : Fragment() {
     private val audioPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             Log.d(TAG, "🔒 Audio permission result: $granted")
+
+            if (!startsOnPermission) {
+                Log.d(TAG, "⏹️ Recording was cancelled while the permission dialog was up")
+                return@registerForActivityResult
+            }
+            startsOnPermission = false
 
             if (granted) {
                 // Permission granted, proceed with recording
@@ -80,15 +91,16 @@ class MicrophoneCoordinator : Fragment() {
     /**
      * Start microphone recording with permission handling
      */
-    fun launchMicrophoneRecorder(id: String? = null, event: String? = null, backgroundRecording: Boolean = false) {
+    fun launchMicrophoneRecorder(id: String? = null, event: String? = null, backgroundRecording: Boolean = false, options: RecordingOptions = RecordingOptions()) {
         val context = requireContext()
 
-        Log.d(TAG, "🎤 launchMicrophoneRecorder called - id=$id, event=$event, background=$backgroundRecording")
+        Log.d(TAG, "🎤 launchMicrophoneRecorder called - id=$id, event=$event, background=$backgroundRecording, options=$options")
 
         // Store parameters for later use
         pendingRecordingId = id
         pendingRecordingEvent = event
         enableBackgroundRecording = backgroundRecording
+        pendingOptions = options
 
         // Store id and event in SharedPreferences for later retrieval in Stop
         val prefs = context.getSharedPreferences("microphone_recording", Context.MODE_PRIVATE)
@@ -105,6 +117,7 @@ class MicrophoneCoordinator : Fragment() {
 
         if (!audioPermissionGranted) {
             Log.d(TAG, "🔒 Audio permission not granted, requesting permission")
+            startsOnPermission = true
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -131,8 +144,8 @@ class MicrophoneCoordinator : Fragment() {
                 MicrophoneFunctions.microphoneRecorder = MicrophoneRecorder(context, enableBackgroundRecording)
             }
 
-            // Start recording
-            val success = microphoneRecorder?.start() ?: false
+            // Start recording; reaching the limit finishes it as Microphone.Stop would
+            val success = microphoneRecorder?.start(pendingOptions) { stopRecording() } ?: false
 
             if (success) {
                 Log.d(TAG, "✅ Recording started successfully")
@@ -167,6 +180,13 @@ class MicrophoneCoordinator : Fragment() {
     fun stopRecording(): String? {
         Log.d(TAG, "⏹️ stopRecording called")
 
+        if (startsOnPermission) {
+            startsOnPermission = false
+            pendingRecordingId = null
+            pendingRecordingEvent = null
+        }
+
+        val mimeType = microphoneRecorder?.mimeType ?: "audio/m4a"
         val path = microphoneRecorder?.stop()
 
         if (path != null) {
@@ -189,7 +209,7 @@ class MicrophoneCoordinator : Fragment() {
             // Create payload JSON
             val payload = JSONObject().apply {
                 put("path", path)
-                put("mimeType", "audio/m4a")
+                put("mimeType", mimeType)
                 if (id != null) {
                     put("id", id)
                 }
@@ -226,6 +246,13 @@ class MicrophoneCoordinator : Fragment() {
      */
     fun getStatus(): String {
         return microphoneRecorder?.getStatus() ?: "idle"
+    }
+
+    /**
+     * How loud the microphone has been since this was last asked, from 0 to 1
+     */
+    fun getLevel(): Float {
+        return microphoneRecorder?.level() ?: 0f
     }
 
     /**

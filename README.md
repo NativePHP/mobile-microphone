@@ -37,6 +37,9 @@ $status = Microphone::getStatus();
 
 // Get last recording path
 $path = Microphone::getRecording();
+
+// How loud the microphone has been since the last call, 0 to 1, for a level meter
+$level = Microphone::level();
 ```
 
 ### JavaScript (Vue/React/Inertia)
@@ -92,6 +95,30 @@ use App\Events\VoiceMessageRecorded;
 
 Microphone::record()
     ->event(VoiceMessageRecorded::class)
+    ->start();
+```
+
+### `wav(int $sampleRate = 16000)`
+
+Record mono 16-bit PCM WAV at the given sample rate instead of AAC. Use it when the recording goes to a server that
+takes uncompressed audio, or one that only takes a few formats. `MicrophoneRecorded` then reports `audio/wav`. A
+minute at 16 kHz is about 1.9 MB.
+
+```php
+Microphone::record()
+    ->wav()
+    ->start();
+```
+
+### `maxDuration(float $seconds)`
+
+Stop recording by itself after this many seconds. `MicrophoneRecorded` is dispatched with what was recorded, as if
+`Microphone::stop()` had been called.
+
+```php
+Microphone::record()
+    ->wav()
+    ->maxDuration(60)
     ->start();
 ```
 
@@ -182,6 +209,26 @@ useEffect(() => {
 }, []);
 ```
 
+### `MicrophoneCancelled`
+
+Dispatched when a recording can't start or breaks off.
+
+**Payload:**
+- `bool $cancelled` - Always `true`
+- `?string $id` - The recorder's ID, if one was set
+- `string $reason` - `permission_denied`, `start_failed` or `recording_failed`
+
+```php
+use Native\Mobile\Attributes\On;
+use Native\Mobile\Events\Microphone\MicrophoneCancelled;
+
+#[On(MicrophoneCancelled::class)]
+public function recordingCancelled(?string $id = null, string $reason = '')
+{
+    $this->error = $reason === 'permission_denied' ? 'Allow the microphone in Settings.' : 'Could not record.';
+}
+```
+
 ## Testing
 
 The plugin extends the NativePHP testing suite with microphone-specific helpers, so your app tests can fake recordings and assert recording activity without knowing any bridge internals:
@@ -217,11 +264,13 @@ The helpers are available on `Native::fakeBridge()` and chain directly off `Nati
 
 ## Notes
 
-- **Microphone Permission:** The first time your app requests microphone access, users will be prompted for permission. If denied, recording functions will fail silently.
+- **Microphone Permission:** The first time your app requests microphone access, users will be prompted for permission. If it's denied, `MicrophoneCancelled` is dispatched with the reason `permission_denied`.
 
 - **Background Recording:** You can allow your app to record audio while the device is locked by toggling `microphone_background` to true in the config.
 
-- **File Format:** Recordings are stored as M4A/AAC audio files (`.m4a`). This format is optimized for small file sizes while maintaining quality.
+- **File Format:** Recordings are stored as M4A/AAC audio files (`.m4a`) unless you ask for `wav()`, which writes mono 16-bit PCM (`.wav`).
+
+- **Audio Session (iOS):** Recording switches the shared audio session to play-and-record, and puts back the category it had once the recording ends, so audio played afterwards doesn't come out of the earpiece.
 
 - **Recording State:** Only one recording can be active at a time. Calling `start()` while a recording is in progress will return `false`.
 

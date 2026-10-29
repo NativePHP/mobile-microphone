@@ -12,8 +12,32 @@ import java.io.File
 import java.io.IOException
 
 /**
+ * How a recording is made, from the parameters Microphone.Start was called with: "m4a" (AAC, the
+ * default) or "wav" (mono 16-bit PCM at sampleRate), and a maximum duration after which it stops
+ * by itself, as if Microphone.Stop was called (0 for no limit).
+ */
+data class RecordingOptions(
+    val format: String = "m4a",
+    val sampleRate: Int = 16000,
+    val maxDurationMs: Long = 0
+) {
+    val isWav: Boolean get() = format == "wav"
+
+    val mimeType: String get() = if (isWav) "audio/wav" else "audio/m4a"
+
+    companion object {
+        fun fromParameters(parameters: Map<String, Any>): RecordingOptions = RecordingOptions(
+            format = if ((parameters["format"] as? String)?.lowercase() == "wav") "wav" else "m4a",
+            sampleRate = (parameters["sampleRate"] as? Number)?.toInt() ?: 16000,
+            maxDurationMs = (((parameters["maxDuration"] as? Number)?.toDouble() ?: 0.0) * 1000).toLong().coerceAtLeast(0)
+        )
+    }
+}
+
+/**
  * MicrophoneRecorder manages audio recording functionality for NativePHP
  * Handles recording state, file management, and MediaRecorder lifecycle
+ * (or WavRecorder's, for WAV)
  */
 class MicrophoneRecorder(
     private val context: Context,
@@ -29,6 +53,12 @@ class MicrophoneRecorder(
     private var recordingState: RecordingState = RecordingState.IDLE
     private var lastRecordingPath: String? = null
     private var currentFileDescriptor: android.os.ParcelFileDescriptor? = null
+    private var wavRecorder: WavRecorder? = null
+    private var wavFile: File? = null
+    private var options = RecordingOptions()
+
+    @Volatile
+    private var reachedLimit = false
 
     enum class RecordingState {
         IDLE,
@@ -37,13 +67,26 @@ class MicrophoneRecorder(
     }
 
     /**
-     * Start a new audio recording
+     * The MIME type of the recording made last, or under way.
+     */
+    val mimeType: String get() = options.mimeType
+
+    /**
+     * Start a new audio recording. Once it reaches options.maxDurationMs, onLimit runs on the main
+     * thread, for the caller to stop it as Microphone.Stop would.
      * @return true if recording started successfully, false otherwise
      */
-    fun start(): Boolean {
+    fun start(options: RecordingOptions = RecordingOptions(), onLimit: () -> Unit = {}): Boolean {
         if (recordingState != RecordingState.IDLE) {
             Log.w(TAG, "⚠️ Cannot start recording - current state: $recordingState")
             return false
+        }
+
+        this.options = options
+        reachedLimit = false
+
+        if (options.isWav) {
+            return startWav(onLimit)
         }
 
         return try {
@@ -89,6 +132,17 @@ class MicrophoneRecorder(
                 setAudioSamplingRate(44100)
                 setOutputFile(currentFileDescriptor!!.fileDescriptor)
 
+                if (options.maxDurationMs > 0) {
+                    setMaxDuration(options.maxDurationMs.toInt())
+                    setOnInfoListener { _, what, _ ->
+                        if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                            Log.d(TAG, "⏱️ Recording reached its limit of ${options.maxDurationMs}ms")
+                            reachedLimit = true
+                            onLimit()
+                        }
+                    }
+                }
+
                 prepare()
                 start()
             }
@@ -122,6 +176,65 @@ class MicrophoneRecorder(
     }
 
     /**
+     * Records WAV into the cache directory, where the M4A path's copies go too.
+     */
+    private fun startWav(onLimit: () -> Unit): Boolean {
+        val file = File(context.cacheDir, "audio_${System.currentTimeMillis()}.wav")
+        val recorder = WavRecorder(file, options.sampleRate, options.maxDurationMs, onLimit)
+
+        val started = try {
+            recorder.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception starting WAV recording", e)
+            false
+        }
+
+        if (!started) {
+            file.delete()
+            return false
+        }
+
+        wavRecorder = recorder
+        wavFile = file
+
+        if (enableBackgroundRecording) {
+            try {
+                AudioRecordingService.start(context)
+                Log.d(TAG, "🚀 Background recording service started")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not start background service (not enabled in config): ${e.message}")
+            }
+        }
+
+        recordingState = RecordingState.RECORDING
+        Log.d(TAG, "🎤 WAV recording started successfully")
+
+        return true
+    }
+
+    private fun stopWav(): String? {
+        wavRecorder?.stop()
+        wavRecorder = null
+
+        val path = wavFile?.absolutePath
+        wavFile = null
+        lastRecordingPath = path
+        recordingState = RecordingState.IDLE
+
+        if (enableBackgroundRecording) {
+            try {
+                AudioRecordingService.stop(context)
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not stop background service: ${e.message}")
+            }
+        }
+
+        Log.d(TAG, "⏹️ Recording stopped: $path")
+
+        return path
+    }
+
+    /**
      * Stop the current recording
      * @return absolute path to the recorded file, or null if no recording or error
      */
@@ -131,13 +244,24 @@ class MicrophoneRecorder(
             return null
         }
 
+        if (wavRecorder != null) {
+            return stopWav()
+        }
+
         return try {
             mediaRecorder?.apply {
                 if (recordingState == RecordingState.PAUSED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     // Resume before stopping if paused
                     resume()
                 }
-                stop()
+                try {
+                    stop()
+                } catch (e: RuntimeException) {
+                    // Reaching the limit stops the recorder by itself, so it may already be stopped.
+                    if (!reachedLimit) {
+                        throw e
+                    }
+                }
                 release()
             }
             mediaRecorder = null
@@ -218,6 +342,13 @@ class MicrophoneRecorder(
             return
         }
 
+        wavRecorder?.let {
+            it.pause()
+            recordingState = RecordingState.PAUSED
+            Log.d(TAG, "⏸️ Recording paused")
+            return
+        }
+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             Log.w(TAG, "⚠️ Pause is not supported on Android versions below 7.0")
             return
@@ -242,6 +373,13 @@ class MicrophoneRecorder(
     fun resume() {
         if (recordingState != RecordingState.PAUSED) {
             Log.w(TAG, "⚠️ Cannot resume - not currently paused")
+            return
+        }
+
+        wavRecorder?.let {
+            it.resume()
+            recordingState = RecordingState.RECORDING
+            Log.d(TAG, "▶️ Recording resumed")
             return
         }
 
@@ -276,6 +414,24 @@ class MicrophoneRecorder(
     }
 
     /**
+     * How loud the microphone has been since this was last asked, from 0 to 1 (the loudest
+     * sample's amplitude), then starts over. 0 while nothing is recording.
+     */
+    fun level(): Float {
+        if (recordingState != RecordingState.RECORDING) {
+            return 0f
+        }
+
+        wavRecorder?.let { return it.level() }
+
+        return try {
+            (mediaRecorder?.maxAmplitude ?: 0) / 32767f
+        } catch (e: IllegalStateException) {
+            0f
+        }
+    }
+
+    /**
      * Get the path to the last recorded audio file
      * @return path to the last recording, or null if none exists
      */
@@ -287,6 +443,15 @@ class MicrophoneRecorder(
      * Clean up resources in case of error
      */
     private fun cleanup() {
+        try {
+            wavRecorder?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping WavRecorder", e)
+        }
+        wavRecorder = null
+        wavFile?.delete()
+        wavFile = null
+
         try {
             mediaRecorder?.release()
         } catch (e: Exception) {
